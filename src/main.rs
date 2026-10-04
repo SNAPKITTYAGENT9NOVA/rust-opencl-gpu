@@ -57,5 +57,27 @@ fn main() -> Result<()> {
     let result = execute(Add, &proque)?;
     println!("{}", format_output(&result));
 
+    negate_demo();
+
     Ok(())
+}
+
+fn negate_demo() {
+    use gpu::functor::{GpuContext, Negate, UnaryOp};
+
+    let ctx = match GpuContext::new() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("negate demo: {e}");
+            std::process::exit(1);
+        }
+    };
+    let input = [true, false, true, true, false];
+    let once = Negate.run_bools(&ctx, &input).expect("negate failed");
+    let twice = Negate.then(Negate).run_bools(&ctx, &input).expect("negate∘negate failed");
+    println!("\ndevice : {}", ctx.device_name().unwrap_or_default());
+    println!("input  : {input:?}");
+    println!("¬input : {once:?}");
+    println!("¬¬input: {twice:?}");
+    assert_eq!(twice, input);
 }
