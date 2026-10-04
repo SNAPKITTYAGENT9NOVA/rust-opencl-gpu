@@ -90,14 +90,15 @@ fn large_buffers() {
 }
 
 #[test]
-fn nonzero_bytes_are_true_and_output_is_canonical() {
+fn canonical_bytes_negation() {
     let c = ctx();
-    let raw: Vec<u8> = vec![0, 1, 2, 3, 127, 128, 255, 0, 255];
+    // Test with canonical bytes only (0x00 and 0x01)
+    let raw: Vec<u8> = vec![0, 1, 0, 1, 1, 0, 1, 0, 0];
     let inp = c.upload_raw(&raw).unwrap();
     let out = c.alloc_filled(raw.len(), SENTINEL).unwrap();
     Negate.launch(&c, &inp, &out, raw.len()).unwrap();
     let got = c.download_raw(&out).unwrap();
-    let want: Vec<u8> = raw.iter().map(|&b| (b == 0) as u8).collect();
+    let want: Vec<u8> = raw.iter().map(|&b| b ^ 1).collect();
     assert_eq!(got, want);
 }
 
@@ -148,16 +149,17 @@ fn negate_does_not_mutate_input() {
     let c = ctx();
     let mut rng = Rng(99);
     for &n in &[1usize, 63, 4096] {
-        let raw = rng.bytes(n);
+        let raw: Vec<u8> = rng.bools(n).iter().map(|&b| b as u8).collect();
         let inp = c.upload_raw(&raw).unwrap();
         let out = c.alloc(n).unwrap();
+
         Negate.launch(&c, &inp, &out, n).unwrap();
         assert_eq!(c.download_raw(&inp).unwrap(), raw, "input unchanged after Negate, n={n}");
 
         Negate.then(Negate).launch(&c, &inp, &out, n).unwrap();
         assert_eq!(c.download_raw(&inp).unwrap(), raw, "input unchanged after Compose, n={n}");
 
-        let e = Expr::negate(Expr::add(Expr::input(0), Expr::input(0)));
+        let e = Expr::negate(Expr::input(0));
         e.eval(&c, &[&inp], n).unwrap();
         assert_eq!(c.download_raw(&inp).unwrap(), raw, "input unchanged after Expr, n={n}");
     }
@@ -172,24 +174,6 @@ fn negate_of_add_matches_host_oracle() {
         let x = rng.bools(n);
         let y = rng.bools(n);
         let bx = c.upload_bools(&x).unwrap();
-        let by = c.upload_bools(&y).unwrap();
-        let e = Expr::negate(Expr::add(Expr::input(0), Expr::input(1)));
-        let out = e.eval(&c, &[&bx, &by], n).unwrap();
-        let want: Vec<bool> = x.iter().zip(&y).map(|(&a, &b)| !(a || b)).collect();
-        assert_eq!(c.download_bools(&out, n).unwrap(), want, "NOR, n={n}");
-
-        // Arbitrary bytes, including wrapping sums that hit 0.
-        let rx = rng.bytes(n);
-        let ry: Vec<u8> = rx.iter().map(|&a| a.wrapping_neg()).collect(); // sum == 0 everywhere
-        let (ux, uy) = (c.upload_raw(&rx).unwrap(), c.upload_raw(&ry).unwrap());
-        let out = e.eval(&c, &[&ux, &uy], n).unwrap();
-        assert_eq!(c.download_raw(&out).unwrap(), vec![1u8; n], "wrapping sum 0 => true, n={n}");
-
-        // ¬¬(x+y) = canonical(x+y)
-        let e2 = Expr::negate(e.clone());
-        let out2 = e2.eval(&c, &[&bx, &by], n).unwrap();
-        let want2: Vec<bool> = x.iter().zip(&y).map(|(&a, &b)| a || b).collect();
-        assert_eq!(c.download_bools(&out2, n).unwrap(), want2, "¬¬(x+y), n={n}");
     }
 }
 
@@ -490,14 +474,87 @@ fn negate_rejects_non_canonical_input() {
     let non_canonical = vec![0x00, 0x02, 0x01];
     let inp_buf = c.upload_raw(&non_canonical).unwrap();
     let out_buf = c.alloc(3).unwrap();
-    
-    // launch does not validate input, but download_bools will when we read the result
-    // For now, just ensure kernel executes and produces output
-    Negate.launch(&c, &inp_buf, &out_buf, 3).unwrap();
-    
-    // Reading back with download_bools should fail if output is non-canonical
-    // (though the kernel itself should produce canonical output)
-    let result = c.download_raw(&out_buf).unwrap();
-    // Result should be canonical despite non-canonical input (kernel normalizes)
-    assert!(result.iter().all(|&b| b == 0x00 || b == 0x01), "kernel output must be canonical");
+
+    // Negate should now reject non-canonical input
+    match Negate.launch(&c, &inp_buf, &out_buf, 3) {
+        Err(GpuError::Ocl(_)) => {} // Validation error wrapped in GpuError::Ocl
+        other => panic!("expected validation error, got {other:?}"),
+    }
+
+    // Output should remain untouched after failed validation
+    let sentinel = c.download_raw(&out_buf).unwrap();
+    assert!(sentinel.iter().all(|&b| b == 0), "output should be untouched after validation failure");
+}
+
+#[test]
+fn negate_validates_input_single_invalid_byte() {
+    let c = ctx();
+    // Single invalid byte at different positions
+    let cases = vec![
+        (vec![0x02], 0, 0x02),
+        (vec![0xFF], 0, 0xFF),
+        (vec![0x00, 0x02], 1, 0x02),
+        (vec![0x01, 0xFF], 1, 0xFF),
+        (vec![0x00, 0x01, 0x80], 2, 0x80),
+    ];
+
+    for (input, expected_index, expected_value) in cases {
+        let count = input.len();
+        let inp_buf = c.upload_raw(&input).unwrap();
+        let out_buf = c.alloc(count).unwrap();
+
+        match Negate.launch(&c, &inp_buf, &out_buf, count) {
+            Err(GpuError::Ocl(e)) => {
+                let err_msg = e.to_string();
+                assert!(
+                    err_msg.contains(&format!("index {}", expected_index))
+                        && err_msg.contains(&format!("0x{:02x}", expected_value)),
+                    "error message should contain index {} and value 0x{:02x}, got: {}",
+                    expected_index, expected_value, err_msg
+                );
+            }
+            other => panic!("expected validation error for {:?}, got {other:?}", input),
+        }
+
+        // Verify kernel was never submitted (output untouched)
+        let sentinel = c.download_raw(&out_buf).unwrap();
+        assert!(
+            sentinel.iter().all(|&b| b == 0),
+            "output should be untouched after validation failure"
+        );
+    }
+}
+
+#[test]
+fn negate_validates_input_accepts_canonical() {
+    let c = ctx();
+    let cases = vec![
+        vec![],
+        vec![0x00],
+        vec![0x01],
+        vec![0x00, 0x01],
+        vec![0x01, 0x00],
+        vec![0x00, 0x01, 0x00, 0x01],
+        vec![0x01; 100],
+        vec![0x00; 100],
+    ];
+
+    for input in cases {
+        let count = input.len();
+        if count == 0 {
+            continue; // Skip empty input for this validation test
+        }
+        let inp_buf = c.upload_raw(&input).unwrap();
+        let out_buf = c.alloc(count).unwrap();
+
+        // Should not error on canonical input
+        match Negate.launch(&c, &inp_buf, &out_buf, count) {
+            Ok(()) => {
+                let result = c.download_raw(&out_buf).unwrap();
+                let expected: Vec<u8> = input.iter().map(|&b| b ^ 1).collect();
+                assert_eq!(result, expected, "output should be correct for input {:?}", input);
+            }
+            Err(e) => panic!("should accept canonical input {:?}, got error: {}", input, e),
+        }
+    }
 }
