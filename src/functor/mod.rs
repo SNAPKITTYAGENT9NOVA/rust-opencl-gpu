@@ -7,12 +7,14 @@ mod add;
 mod agents;
 mod canonical;
 mod expr;
+mod kernels;
 mod negate;
 
 pub use add::Add;
 pub use agents::{ExecutionAgent, ValidationAgent, VerificationAgent, Workflow};
 pub use canonical::{bools_to_gpu, gpu_to_bools, is_canonical, validate_buffer, CANONICAL_FALSE, CANONICAL_TRUE};
 pub use expr::Expr;
+pub use kernels::{validate_registry, KERNEL_REGISTRY, ADD_U8_SIGNATURE, NEGATE_U8_SIGNATURE};
 pub use negate::Negate;
 
 use ocl::{Buffer, ProQue};
@@ -85,6 +87,9 @@ impl GpuContext {
 
     /// Build a context from arbitrary OpenCL source (compile errors are returned, not swallowed).
     pub fn with_source(src: &str) -> Result<Self> {
+        // Validate kernel registry before creating context.
+        validate_registry().map_err(|e| GpuError::Ocl(ocl::Error::from(e)))?;
+
         // Observed with pocl: concurrent first-time platform/device discovery from several
         // threads makes clGetDeviceIDs fail intermittently, so creation is serialised.
         let _guard = INIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
