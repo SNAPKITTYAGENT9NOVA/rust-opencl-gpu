@@ -4,10 +4,12 @@
 //! `Negate` always writes canonical output (0 or 1).
 
 mod add;
+mod agents;
 mod expr;
 mod negate;
 
 pub use add::Add;
+pub use agents::{ExecutionAgent, ValidationAgent, VerificationAgent, Workflow};
 pub use expr::Expr;
 pub use negate::Negate;
 
