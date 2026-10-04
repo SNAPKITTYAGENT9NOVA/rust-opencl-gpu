@@ -91,6 +91,10 @@ module bit_accelerator_v2 #(
   // ===== Result Extraction =====
   assign result_data = shifted_word & 64'h1;
 
+  // Result is a one-cycle pulse, combinational from ST_RESULT
+  assign result_valid = (current_state == ST_RESULT);
+  assign result_bit   = (current_state == ST_RESULT) ? result_data[0] : 1'b0;
+
   // ===== State Machine: Sequential =====
   always_ff @(posedge clk) begin
     if (reset) begin
@@ -99,8 +103,6 @@ module bit_accelerator_v2 #(
       bit_offset_reg <= 64'h0;
       operation_reg <= 3'h0;
       read_word <= 64'h0;
-      result_valid <= 1'b0;
-      result_bit <= 1'b0;
       error <= 1'b0;
     end else begin
       current_state <= next_state;
@@ -117,18 +119,11 @@ module bit_accelerator_v2 #(
         read_word <= mem_rdata;
       end
 
-      // Capture error status
-      if (mem_fault) begin
+      // Error status: cleared on accept, set on read fault while waiting
+      if (op_valid && op_ready) begin
+        error <= 1'b0;
+      end else if (mem_fault && current_state == ST_READ_WAIT) begin
         error <= 1'b1;
-      end
-
-      // Assert result_valid only in RESULT state (one-cycle pulse)
-      if (current_state == ST_RESULT) begin
-        result_valid <= 1'b1;
-        result_bit <= result_data[0];
-      end else begin
-        result_valid <= 1'b0;
-        result_bit <= 1'b0;
       end
     end
   end
@@ -203,6 +198,15 @@ module bit_accelerator_v2 #(
 
       default: next_state = ST_IDLE;
     endcase
+
+    // A request presented in a cycle where reset is asserted is never issued,
+    // so reset cannot race with a write handshake at the same clock edge.
+    if (reset) begin
+      mem_valid = 1'b0;
+      mem_write = 1'b0;
+      mem_wdata = 64'h0;
+      mem_wstrb = 8'h00;
+    end
   end
 
 endmodule : bit_accelerator_v2
