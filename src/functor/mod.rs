@@ -5,11 +5,13 @@
 
 mod add;
 mod agents;
+mod canonical;
 mod expr;
 mod negate;
 
 pub use add::Add;
 pub use agents::{ExecutionAgent, ValidationAgent, VerificationAgent, Workflow};
+pub use canonical::{bools_to_gpu, gpu_to_bools, is_canonical, validate_buffer, CANONICAL_FALSE, CANONICAL_TRUE};
 pub use expr::Expr;
 pub use negate::Negate;
 
@@ -146,7 +148,14 @@ impl GpuContext {
     }
 
     pub fn download_bools(&self, buf: &Buffer<u8>, count: usize) -> Result<Vec<bool>> {
-        Ok(self.download_raw(buf)?.into_iter().take(count).map(|b| b != 0).collect())
+        let raw = self.download_raw(buf)?;
+        let slice = raw.get(..count).ok_or(GpuError::BufferTooShort {
+            which: "download target",
+            len: raw.len(),
+            count,
+        })?;
+        validate_buffer(slice)?;
+        Ok(slice.iter().map(|&b| b != 0).collect())
     }
 
     pub(crate) fn proque(&self) -> &ProQue {

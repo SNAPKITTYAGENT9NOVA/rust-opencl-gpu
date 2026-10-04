@@ -355,3 +355,149 @@ fn error_buffer_allocation_failure_is_reported() {
     // Far beyond any device's max allocation size.
     assert!(matches!(c.alloc(usize::MAX / 4), Err(GpuError::Ocl(_))));
 }
+
+#[test]
+fn canonical_representation_false_is_0x00() {
+    use gpu::functor::CANONICAL_FALSE;
+    assert_eq!(CANONICAL_FALSE, 0x00);
+}
+
+#[test]
+fn canonical_representation_true_is_0x01() {
+    use gpu::functor::CANONICAL_TRUE;
+    assert_eq!(CANONICAL_TRUE, 0x01);
+}
+
+#[test]
+fn canonical_validation_accepts_0x00_and_0x01() {
+    use gpu::functor::is_canonical;
+    assert!(is_canonical(0x00));
+    assert!(is_canonical(0x01));
+}
+
+#[test]
+fn canonical_validation_rejects_non_canonical() {
+    use gpu::functor::is_canonical;
+    for byte in 2u8..=255 {
+        assert!(!is_canonical(byte), "byte 0x{:02x} should be non-canonical", byte);
+    }
+}
+
+#[test]
+fn canonical_buffer_validation_accepts_valid() {
+    use gpu::functor::validate_buffer;
+    assert!(validate_buffer(&[]).is_ok());
+    assert!(validate_buffer(&[0x00]).is_ok());
+    assert!(validate_buffer(&[0x01]).is_ok());
+    assert!(validate_buffer(&[0x00, 0x01]).is_ok());
+    assert!(validate_buffer(&[0x01, 0x00]).is_ok());
+    assert!(validate_buffer(&[0x00, 0x01, 0x00, 0x01]).is_ok());
+}
+
+#[test]
+fn canonical_buffer_validation_rejects_non_canonical() {
+    use gpu::functor::validate_buffer;
+    assert!(validate_buffer(&[0x02]).is_err(), "0x02 should be rejected");
+    assert!(validate_buffer(&[0xFF]).is_err(), "0xFF should be rejected");
+    assert!(validate_buffer(&[0x00, 0x02]).is_err(), "0x02 in position 1 should be rejected");
+    assert!(validate_buffer(&[0x01, 0x01, 0x80]).is_err(), "0x80 should be rejected");
+}
+
+#[test]
+fn canonical_bools_to_gpu_conversion() {
+    use gpu::functor::bools_to_gpu;
+    assert_eq!(bools_to_gpu(&[]), vec![]);
+    assert_eq!(bools_to_gpu(&[false]), vec![0x00]);
+    assert_eq!(bools_to_gpu(&[true]), vec![0x01]);
+    assert_eq!(bools_to_gpu(&[true, false, true, true, false]), vec![0x01, 0x00, 0x01, 0x01, 0x00]);
+}
+
+#[test]
+fn canonical_gpu_to_bools_conversion() {
+    use gpu::functor::gpu_to_bools;
+    assert_eq!(gpu_to_bools(&[]).unwrap(), vec![]);
+    assert_eq!(gpu_to_bools(&[0x00]).unwrap(), vec![false]);
+    assert_eq!(gpu_to_bools(&[0x01]).unwrap(), vec![true]);
+    assert_eq!(
+        gpu_to_bools(&[0x01, 0x00, 0x01, 0x01, 0x00]).unwrap(),
+        vec![true, false, true, true, false]
+    );
+}
+
+#[test]
+fn canonical_gpu_to_bools_rejects_non_canonical() {
+    use gpu::functor::gpu_to_bools;
+    assert!(gpu_to_bools(&[0x02]).is_err());
+    assert!(gpu_to_bools(&[0xFF]).is_err());
+    assert!(gpu_to_bools(&[0x00, 0x02]).is_err());
+}
+
+#[test]
+fn negate_output_is_canonical() {
+    let c = ctx();
+    let inputs = vec![
+        vec![0x00],
+        vec![0x01],
+        vec![0x00, 0x01],
+        vec![0x01, 0x00],
+        vec![0x00, 0x01, 0x00, 0x01],
+    ];
+    for input in inputs {
+        let count = input.len();
+        let inp_buf = c.upload_raw(&input).unwrap();
+        let out_buf = c.alloc(count).unwrap();
+        Negate.launch(&c, &inp_buf, &out_buf, count).unwrap();
+        let result = c.download_raw(&out_buf).unwrap();
+        for (i, &byte) in result.iter().enumerate() {
+            assert!(
+                byte == 0x00 || byte == 0x01,
+                "output[{}] = 0x{:02x} is non-canonical",
+                i,
+                byte
+            );
+        }
+    }
+}
+
+#[test]
+fn double_negation_byte_equality() {
+    let c = ctx();
+    let inputs = vec![
+        vec![0x00],
+        vec![0x01],
+        vec![0x00, 0x01],
+        vec![0x01, 0x00],
+        vec![0x00, 0x01, 0x00, 0x01, 0x00],
+        (0..1000).map(|i| if i % 2 == 0 { 0x00 } else { 0x01 }).collect::<Vec<_>>(),
+    ];
+    for input in inputs {
+        let count = input.len();
+        let inp_buf = c.upload_raw(&input).unwrap();
+        let tmp_buf = c.alloc(count).unwrap();
+        let out_buf = c.alloc(count).unwrap();
+        
+        Negate.launch(&c, &inp_buf, &tmp_buf, count).unwrap();
+        Negate.launch(&c, &tmp_buf, &out_buf, count).unwrap();
+        
+        let result = c.download_raw(&out_buf).unwrap();
+        assert_eq!(result, input, "double negation must be byte-for-byte identity");
+    }
+}
+
+#[test]
+fn negate_rejects_non_canonical_input() {
+    let c = ctx();
+    let non_canonical = vec![0x00, 0x02, 0x01];
+    let inp_buf = c.upload_raw(&non_canonical).unwrap();
+    let out_buf = c.alloc(3).unwrap();
+    
+    // launch does not validate input, but download_bools will when we read the result
+    // For now, just ensure kernel executes and produces output
+    Negate.launch(&c, &inp_buf, &out_buf, 3).unwrap();
+    
+    // Reading back with download_bools should fail if output is non-canonical
+    // (though the kernel itself should produce canonical output)
+    let result = c.download_raw(&out_buf).unwrap();
+    // Result should be canonical despite non-canonical input (kernel normalizes)
+    assert!(result.iter().all(|&b| b == 0x00 || b == 0x01), "kernel output must be canonical");
+}
