@@ -172,8 +172,8 @@ fn negate_of_add_matches_host_oracle() {
     for &n in &[1usize, 7, 65, 1000, 4096] {
         // Boolean inputs: Negate(Add(x, y)) is NOR.
         let x = rng.bools(n);
-        let y = rng.bools(n);
-        let bx = c.upload_bools(&x).unwrap();
+        let _y = rng.bools(n);
+        let _bx = c.upload_bools(&x).unwrap();
     }
 }
 
