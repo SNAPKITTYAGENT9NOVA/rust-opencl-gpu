@@ -4,12 +4,12 @@ use ocl::Buffer;
 pub(super) const KERNEL_SRC: &str = r#"
 __kernel void negate_u8(__global const uchar* input,
                         __global uchar* output,
-                        const uint count) {
-    size_t i = get_global_id(0);
-    if (i >= count) {
+                        const ulong element_count) {
+    const ulong i = (ulong)get_global_id(0);
+    if (i >= element_count) {
         return;
     }
-    output[i] = (input[i] == 0) ? (uchar)1 : (uchar)0;
+    output[i] = input[i] ^ (uchar)1;
 }
 "#;
 
@@ -44,7 +44,7 @@ impl UnaryOp for Negate {
             .local_work_size(local)
             .arg(input)
             .arg(output)
-            .arg(count as u32)
+            .arg(count as u64)
             .build()?;
         // SAFETY: arguments match the kernel signature; the kernel guards gid < count and
         // count <= both buffer lengths was validated above.

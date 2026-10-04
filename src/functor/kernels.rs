@@ -15,7 +15,7 @@ pub const NEGATE_U8_SIGNATURE: KernelSignature = KernelSignature {
     params: &[
         ("input", "__global const uchar*"),
         ("output", "__global uchar*"),
-        ("count", "const uint"),
+        ("element_count", "const ulong"),
     ],
     min_work_items: 1,
     safety_notes: "Kernel guards gid >= count. Input and output must not overlap. \
@@ -77,7 +77,7 @@ mod tests {
         assert_eq!(NEGATE_U8_SIGNATURE.params.len(), 3);
         assert_eq!(NEGATE_U8_SIGNATURE.params[0], ("input", "__global const uchar*"));
         assert_eq!(NEGATE_U8_SIGNATURE.params[1], ("output", "__global uchar*"));
-        assert_eq!(NEGATE_U8_SIGNATURE.params[2], ("count", "const uint"));
+        assert_eq!(NEGATE_U8_SIGNATURE.params[2], ("element_count", "const ulong"));
     }
 
     #[test]
