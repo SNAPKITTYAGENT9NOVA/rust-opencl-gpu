@@ -1,0 +1,28 @@
+BIT-STRING HARDWARE ACCELERATOR INSTRUCTION SET
+===============================================
+
+INSTRUCTIONS:
+  BIT_GET    (opcode=0x000): Read single bit
+  BIT_TEST   (opcode=0x001): Test bit and set condition flag
+  BIT_SET    (opcode=0x010): Set bit to 1
+  BIT_CLEAR  (opcode=0x011): Clear bit to 0
+  BIT_TOGGLE (opcode=0x100): Invert bit
+
+ADDRESSING:
+  Base Address: 64-bit byte address
+  Bit Offset:   64-bit bit offset
+
+  Absolute Bit Address = (base_address × 8) + bit_offset
+  Word Index = absolute_bit_address / 64
+  Bit Index  = absolute_bit_address mod 64
+
+LATENCY:
+  L1 Cache Hit:  4 cycles
+  L2 Cache Hit:  10-15 cycles
+  Memory Access: 50+ cycles
+
+MEMORY INTERFACE:
+  Synchronous word-addressed memory
+  64-bit data width
+  Variable read latency
+  Atomic read-modify-write for BIT_SET/CLEAR/TOGGLE
