@@ -2,7 +2,12 @@
 name = "gpu"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
+description = "Composable element-wise OpenCL kernels over canonical u8 Boolean buffers"
+repository = "https://github.com/SNAPKITTYAGENT9NOVA/rust-opencl-gpu"
+license-file = "LICENSE"
+readme = "README.md"
+publish = false
 
 [dependencies]
-
 ocl = "0.19"
