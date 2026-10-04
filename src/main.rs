@@ -58,6 +58,7 @@ fn main() -> Result<()> {
     println!("{}", format_output(&result));
 
     negate_demo();
+    agent_workflow_demo();
 
     Ok(())
 }
@@ -80,4 +81,56 @@ fn negate_demo() {
     println!("¬input : {once:?}");
     println!("¬¬input: {twice:?}");
     assert_eq!(twice, input);
+}
+
+fn agent_workflow_demo() {
+    use gpu::functor::{Negate, ValidationAgent, VerificationAgent, Workflow};
+
+    println!("\n=== 3-Agent Workflow Demo ===");
+
+    let workflow = match Workflow::new() {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("workflow error: {e}");
+            return;
+        }
+    };
+
+    println!("device: {}", workflow.device_name().unwrap_or_default());
+
+    let input = [true, false, true, true, false];
+    println!("\n[ValidationAgent] validating input: {input:?}");
+
+    if let Err(e) = ValidationAgent::validate_input(input.len()) {
+        eprintln!("validation failed: {e}");
+        return;
+    }
+    println!("[ValidationAgent] ✓ input valid (count={})", input.len());
+
+    println!("[ExecutionAgent] running Negate kernel on device...");
+    match workflow.run_unary_bools(&Negate, &input) {
+        Ok(negate_result) => {
+            println!("[ExecutionAgent] ✓ Negate computed: {negate_result:?}");
+            let expected = [false, true, false, false, true];
+            if let Ok(()) = VerificationAgent::verify_bools_equal(&negate_result, &expected) {
+                println!("[VerificationAgent] ✓ Output verified against expected {expected:?}");
+            } else {
+                println!("[VerificationAgent] ✗ Output mismatch");
+            }
+        }
+        Err(e) => eprintln!("[ExecutionAgent] ✗ failed: {e}"),
+    }
+
+    println!("\n[ExecutionAgent] running Negate∘Negate composition...");
+    match workflow.run_composed_bools(&Negate, &Negate, &input) {
+        Ok(double_negated) => {
+            println!("[ExecutionAgent] ✓ Negate∘Negate computed: {double_negated:?}");
+            if let Ok(()) = VerificationAgent::verify_bools_equal(&double_negated, &input) {
+                println!("[VerificationAgent] ✓ Involution verified: input == ¬¬input");
+            } else {
+                println!("[VerificationAgent] ✗ Involution failed");
+            }
+        }
+        Err(e) => eprintln!("[ExecutionAgent] ✗ composition failed: {e}"),
+    }
 }
