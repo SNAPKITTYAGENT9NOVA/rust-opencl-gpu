@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, tests on PoCL)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install OpenCL (PoCL CPU device)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pocl-opencl-icd ocl-icd-opencl-dev clinfo
+          clinfo -l
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      # Serial: PoCL 5.0 can abort (pocl_release_dlhandle_cache assertion) when
+      # several OpenCL contexts are released from different threads at once.
+      - run: cargo test
+        env:
+          RUST_TEST_THREADS: "1"
+      - run: cargo run --quiet
+
+  msrv:
+    name: Rust 1.85 (rust-version)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ocl-icd-opencl-dev
+      - uses: dtolnay/rust-toolchain@1.85
+      - run: cargo build --all-targets --locked
+
+  bit-accelerator:
+    name: bit_accelerator (lint, simulation, Why3)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: bit_accelerator
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends iverilog verilator why3 z3
+          why3 config detect
+      - run: make test
